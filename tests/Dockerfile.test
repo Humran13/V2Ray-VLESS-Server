@@ -1,0 +1,10 @@
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y -qq \
+    bash curl jq unzip openssl ca-certificates git iproute2 python3 \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz -o /tmp/bats.tar.gz \
+    && tar -xzf /tmp/bats.tar.gz -C /tmp \
+    && /tmp/bats-core-1.11.0/install.sh /usr/local \
+    && rm -rf /tmp/bats.tar.gz /tmp/bats-core-1.11.0
+WORKDIR /workspace

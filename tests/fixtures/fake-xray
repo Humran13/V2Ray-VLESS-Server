@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Minimal stand-in for the real xray binary, used by unit tests that
+# exercise state/profile/user logic without needing network access or a
+# real Xray build. Stage C tests (tests/xray_configs) use the REAL binary.
+set -euo pipefail
+
+case "${1:-}" in
+    x25519)
+        echo "Private key: $(head -c32 /dev/urandom | base64 | head -c43)"
+        echo "Public key: $(head -c32 /dev/urandom | base64 | head -c43)"
+        ;;
+    uuid)
+        if command -v uuidgen >/dev/null 2>&1; then uuidgen; else cat /proc/sys/kernel/random/uuid; fi
+        ;;
+    version)
+        echo "Xray 26.3.27 (Xray, Penetrates Everything.) Custom (go1.22.0 linux/amd64)"
+        ;;
+    run)
+        # emulate: xray run -test -config <path>
+        config=""
+        while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "-config" ]]; then config="$2"; break; fi
+            shift
+        done
+        if [[ -n "$config" ]] && command -v jq >/dev/null 2>&1; then
+            jq empty "$config"
+        fi
+        exit 0
+        ;;
+    *)
+        echo "fake-xray: unknown command $*" >&2
+        exit 1
+        ;;
+esac

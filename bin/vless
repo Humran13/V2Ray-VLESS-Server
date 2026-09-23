@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# vless - V2Ray VLESS Server Manager CLI/TUI.
+set -uo pipefail
+
+_resolve_lib_dir() {
+    # Prefer the installed location; fall back to a sibling lib/ dir so the
+    # manager also works when run directly from a cloned repo (dev/testing).
+    if [[ -n "${VLESS_LIB_DIR:-}" ]]; then
+        printf '%s' "$VLESS_LIB_DIR"; return
+    fi
+    if [[ -d "/opt/v2ray-vless-server/lib" ]]; then
+        printf '%s' "/opt/v2ray-vless-server/lib"; return
+    fi
+    local here; here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    printf '%s' "${here}/../lib"
+}
+
+LIB_DIR="$(_resolve_lib_dir)"
+for m in common os validate xray config profiles users reality tls firewall share backup diagnostics update uninstall; do
+    # shellcheck source=/dev/null
+    source "${LIB_DIR}/${m}.sh"
+done
+
+VLESS_VERSION_FILE_CANDIDATES=("${VLESS_PREFIX}/VERSION" "${LIB_DIR}/../VERSION")
+manager_version() {
+    local f
+    for f in "${VLESS_VERSION_FILE_CANDIDATES[@]}"; do
+        [[ -f "$f" ]] && { cat "$f"; return; }
+    done
+    printf '%s' "$VLESS_MANAGER_VERSION"
+}
+
+usage() {
+    cat <<EOF
+V2Ray VLESS Server Manager (v$(manager_version))
+
+Usage: vless [command] [args...]
+
+Commands:
+  status                      Show server status
+  user add <profile> <name>   Add a user to a profile
+  user list                   List all users
+  user show <name>            Show user connection info + QR
+  user delete <name>          Delete a user
+  user enable <name>          Enable a user
+  user disable <name>         Disable a user
+  profile list                List connection profiles
+  profile remove <id>         Remove a profile
+  diagnostics                 Run health diagnostics
+  update xray                 Update Xray-core to latest stable
+  update manager              Update this manager
+  backup                      Create a backup archive
+  restore <archive>           Restore from a backup archive
+  repair                      Repair project files/services
+  uninstall [--purge|--keep-data]  Uninstall (interactive if no flag given)
+
+Running 'vless' with no arguments launches the interactive menu.
+EOF
+}
+
+cmd_status() {
+    local host installed latest
+    installed="$(xray_installed_version)"
+    latest="$(xray_latest_stable_version 2>/dev/null || echo "unavailable")"
+    host="$(detect_public_ip 2>/dev/null || echo "unavailable")"
+
+    echo "V2Ray VLESS Server Manager"
+    echo "  Manager version:   $(manager_version)"
+    echo "  Xray version:      ${installed:-not installed}"
+    echo "  Latest stable:     ${latest}"
+    if systemd_available; then
+        echo "  Service state:     $(xray_service_status)"
+        echo "  Uptime:            $(systemctl show v2ray-vless-server -p ActiveEnterTimestamp --value 2>/dev/null || echo unknown)"
+    else
+        echo "  Service state:     n/a (no systemd in this environment)"
+    fi
+    echo "  Public IP:         ${host}"
+    echo "  Enabled profiles:  $(state_query '[.profiles[]|select(.enabled==true)]|length' 2>/dev/null || echo 0)"
+    echo "  Enabled users:     $(state_query '[.users[]|select(.enabled==true)]|length' 2>/dev/null || echo 0)"
+    echo "  Listening ports:   $(state_query -r '.profiles[]|select(.enabled==true)|.port' 2>/dev/null | tr '\n' ' ')"
+}
+
+cmd_user() {
+    local sub="${1:-}"; shift || true
+    case "$sub" in
+        add)
+            local profile="${1:?profile id required}" name="${2:?user name required}"
+            require_root
+            user_add "$profile" "$name"
+            local host; host="$(detect_public_ip)"
+            share_build_uri "$profile" "$name" "$host"
+            ;;
+        list)
+            user_list
+            ;;
+        show)
+            local name="${1:?user name required}"
+            local uj; uj="$(user_get_json "$name")"
+            [[ -n "$uj" ]] || die "no such user: $name"
+            local pid; pid="$(jq -r '.profile_id' <<<"$uj")"
+            local host; host="$(detect_public_ip)"
+            local uri; uri="$(share_build_uri "$pid" "$name" "$host")"
+            echo "User:      $name"
+            echo "Profile:   $pid"
+            echo "Server:    $host"
+            echo "URI:       $uri"
+            share_print_qr "$uri"
+            ;;
+        delete)
+            require_root
+            user_delete "${1:?user name required}"
+            ;;
+        enable)
+            require_root
+            user_set_enabled "${1:?user name required}" true
+            ;;
+        disable)
+            require_root
+            user_set_enabled "${1:?user name required}" false
+            ;;
+        *) die "usage: vless user {add|list|show|delete|enable|disable} ..." ;;
+    esac
+}
+
+cmd_profile() {
+    local sub="${1:-}"; shift || true
+    case "$sub" in
+        list) profile_list ;;
+        remove) require_root; profile_remove "${1:?profile id required}" ;;
+        *) die "usage: vless profile {list|remove} ..." ;;
+    esac
+}
+
+cmd_update() {
+    require_root
+    case "${1:-}" in
+        xray) update_xray "${2:-}" ;;
+        manager) update_manager ;;
+        *) die "usage: vless update {xray|manager}" ;;
+    esac
+}
+
+cmd_repair() {
+    require_root
+    state_init
+    if [[ -f "$VLESS_XRAY_CONFIG" ]]; then
+        xray_config_test "$VLESS_XRAY_CONFIG" || log_warn "existing config invalid; regenerating from state"
+    fi
+    local candidate; candidate="$(mk_tmp_file)"
+    xray_full_config_build > "$candidate"
+    xray_config_apply "$candidate"
+    log_ok "Repair complete"
+}
+
+cmd_uninstall() {
+    require_root
+    case "${1:-}" in
+        --purge) uninstall_run purge; return ;;
+        --keep-data) uninstall_run keep-data; return ;;
+    esac
+    echo "1) Remove program, keep configuration/backups"
+    echo "2) Complete removal (including users, keys, certs, backups)"
+    read -r -p "Select [1/2]: " choice </dev/tty
+    case "$choice" in
+        2) confirm "This will permanently delete ALL data. Continue?" && uninstall_run purge ;;
+        *) uninstall_run keep-data ;;
+    esac
+}
+
+interactive_menu() {
+    while true; do
+        cat <<'EOF'
+
+V2Ray VLESS Server Manager
+---------------------------
+ 1. Server Status         8. Add Connection Profile
+ 2. Add User              9. Remove Connection Profile
+ 3. List Users           10. Show QR Code
+ 4. Show User            11. Diagnostics
+ 5. Delete User          12. Backup
+ 6. Enable/Disable User  13. Restore
+ 7. Connection Profiles  14. Repair Installation
+                         15. Uninstall
+  0. Exit
+EOF
+        read -r -p "Select an option: " opt </dev/tty
+        case "$opt" in
+            1) cmd_status ;;
+            2) read -r -p "Profile id: " p </dev/tty; read -r -p "User name: " n </dev/tty; cmd_user add "$p" "$n" ;;
+            3) cmd_user list ;;
+            4) read -r -p "User name: " n </dev/tty; cmd_user show "$n" ;;
+            5) read -r -p "User name: " n </dev/tty; cmd_user delete "$n" ;;
+            6) read -r -p "User name: " n </dev/tty; read -r -p "Enable? [y/N]: " e </dev/tty
+               if [[ "$e" =~ ^[Yy]$ ]]; then cmd_user enable "$n"; else cmd_user disable "$n"; fi ;;
+            7) cmd_profile list ;;
+            8) echo "Use install.sh's profile wizard, or 'vless profile add' (see docs) to add a profile." ;;
+            9) read -r -p "Profile id: " p </dev/tty; cmd_profile remove "$p" ;;
+            10) read -r -p "User name: " n </dev/tty; cmd_user show "$n" ;;
+            11) diagnostics_run ;;
+            12) backup_create ;;
+            13) read -r -p "Backup archive path: " a </dev/tty; backup_restore "$a" ;;
+            14) cmd_repair ;;
+            15) cmd_uninstall ;;
+            0) exit 0 ;;
+            *) echo "Invalid option" ;;
+        esac
+    done
+}
+
+main() {
+    local cmd="${1:-}"
+    [[ -n "$cmd" ]] && shift || true
+    case "$cmd" in
+        "") interactive_menu ;;
+        status) cmd_status ;;
+        user) cmd_user "$@" ;;
+        profile) cmd_profile "$@" ;;
+        diagnostics) diagnostics_run ;;
+        update) cmd_update "$@" ;;
+        backup) backup_create ;;
+        restore) backup_restore "${1:?archive path required}" ;;
+        repair) cmd_repair ;;
+        uninstall) cmd_uninstall "$@" ;;
+        -h|--help|help) usage ;;
+        *) usage; exit 1 ;;
+    esac
+}
+
+main "$@"

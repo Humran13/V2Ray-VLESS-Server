@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: |
+          for f in install.sh bin/vless lib/*.sh; do bash -n "$f"; done
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+          additional_files: 'vless'
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats and jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+          git clone --depth 1 --branch v1.11.0 https://github.com/bats-core/bats-core.git /tmp/bats-core
+          sudo /tmp/bats-core/install.sh /usr/local
+      - name: Run unit tests
+        run: bats tests/unit/
+
+  xray-config-validation:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq unzip
+      - name: Download latest stable Xray-core
+        run: |
+          mkdir -p /tmp/xraybin
+          tag="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/${tag}/Xray-linux-64.zip" -o /tmp/xray.zip
+          unzip -q -o /tmp/xray.zip -d /tmp/xraybin xray
+          chmod +x /tmp/xraybin/xray
+      - name: Validate every advertised connection profile
+        env:
+          VLESS_XRAY_TEST_DIR: /tmp/xraybin
+        run: bash tests/xray_configs/validate_all_profiles.sh
+
+  reality-e2e-advisory:
+    runs-on: ubuntu-latest
+    needs: xray-config-validation
+    continue-on-error: true  # advisory only, see tests/e2e/reality_e2e_test.sh header
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq/python3
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq unzip python3
+      - name: Download latest stable Xray-core
+        run: |
+          mkdir -p /tmp/xraybin
+          tag="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+          curl -fsSL "https://github.com/XTLS/Xray-core/releases/download/${tag}/Xray-linux-64.zip" -o /tmp/xray.zip
+          unzip -q -o /tmp/xray.zip -d /tmp/xraybin xray
+          chmod +x /tmp/xraybin/xray
+      - name: Real client/server REALITY handshake attempt
+        env:
+          VLESS_XRAY_TEST_DIR: /tmp/xraybin
+        run: bash tests/e2e/reality_e2e_test.sh
+
+  ubuntu-compat-matrix:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["18.04", "20.04", "22.04", "24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install smoke test inside container (config/logic only, no real systemd)
+        run: |
+          docker run --rm --cap-add=NET_ADMIN -v "${{ github.workspace }}":/workspace "ubuntu:${{ matrix.ubuntu }}" \
+            bash /workspace/tests/install_smoke_test.sh

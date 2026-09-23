@@ -1,0 +1,5 @@
+*.log
+/tests/tmp/
+*.tar.gz
+.DS_Store
+.claude/
