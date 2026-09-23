@@ -81,8 +81,8 @@ xray_config_apply() {
     chmod 0640 "$tmp_live"
     mv -f "$tmp_live" "$VLESS_XRAY_CONFIG"
 
-    if ! systemd_available; then
-        log_warn "systemd not available in this environment; skipping service reload (config file written)"
+    if ! systemd_available || [[ ! -f "$VLESS_SYSTEMD_UNIT" ]]; then
+        log_warn "systemd/service unit not available yet; skipping service reload (config file written)"
         return 0
     fi
 

@@ -25,7 +25,7 @@ update_xray() {
         die "new Xray binary rejects the existing configuration - investigate before restarting the service"
     fi
 
-    if systemd_available; then
+    if systemd_available && [[ -f "$VLESS_SYSTEMD_UNIT" ]]; then
         xray_service_restart
         xray_health_check || die "service unhealthy after Xray update"
     fi

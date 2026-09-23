@@ -60,7 +60,7 @@ backup_restore() {
         die "restore failed and was rolled back"
     fi
 
-    if systemd_available; then
+    if systemd_available && [[ -f "$VLESS_SYSTEMD_UNIT" ]]; then
         xray_service_restart || true
         xray_health_check || log_warn "service did not report healthy after restore; check 'vless diagnostics'"
     fi
