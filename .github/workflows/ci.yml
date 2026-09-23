@@ -82,6 +82,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install smoke test inside container (config/logic only, no real systemd)
+        # VLESS_XRAY_VERSION is pinned here (this job tests OS/install logic,
+        # not live version discovery) so 5 parallel matrix jobs don't all hit
+        # GitHub's unauthenticated API rate limit (60/hr) at once.
         run: |
-          docker run --rm --cap-add=NET_ADMIN -v "${{ github.workspace }}":/workspace "ubuntu:${{ matrix.ubuntu }}" \
+          docker run --rm --cap-add=NET_ADMIN -e VLESS_XRAY_VERSION=v26.3.27 \
+            -v "${{ github.workspace }}":/workspace "ubuntu:${{ matrix.ubuntu }}" \
             bash /workspace/tests/install_smoke_test.sh
