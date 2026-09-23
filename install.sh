@@ -9,19 +9,24 @@
 # shellcheck disable=SC2016  # jq filter is intentionally single-quoted
 set -uo pipefail
 
-SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VLESS_REPO_RAW_BASE="https://raw.githubusercontent.com/Humran13/V2Ray-VLESS-Server/main"
+# BASH_SOURCE[0] is unset when this script is piped into bash (e.g.
+# `curl ... | sudo bash`), so it must be read defensively under `set -u`.
+SCRIPT_SOURCE_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+VLESS_REPO_ARCHIVE_URL="https://github.com/Humran13/V2Ray-VLESS-Server/archive/refs/heads/main.tar.gz"
 declare -a VLESS_TMP_PATHS=()
 
 # ---- Bootstrap: locate or fetch lib/ -------------------------------------
-if [[ -d "${SCRIPT_SOURCE_DIR}/lib" ]]; then
+if [[ -n "$SCRIPT_SOURCE_DIR" && -d "${SCRIPT_SOURCE_DIR}/lib" ]]; then
     LIB_SRC_DIR="${SCRIPT_SOURCE_DIR}/lib"
 else
     # Running via `curl | bash` - fetch the rest of the repo into a temp dir.
     TMP_BOOTSTRAP="$(mktemp -d)"
     VLESS_TMP_PATHS+=("$TMP_BOOTSTRAP")
     echo "[INFO] Fetching V2Ray-VLESS-Server sources..." >&2
-    curl -fsSL "${VLESS_REPO_RAW_BASE}/archive/refs/heads/main.tar.gz" -o "${TMP_BOOTSTRAP}/src.tar.gz"
+    curl -fsSL "$VLESS_REPO_ARCHIVE_URL" -o "${TMP_BOOTSTRAP}/src.tar.gz"
     tar -xzf "${TMP_BOOTSTRAP}/src.tar.gz" -C "$TMP_BOOTSTRAP"
     SCRIPT_SOURCE_DIR="$(find "$TMP_BOOTSTRAP" -maxdepth 1 -type d -name 'V2Ray-VLESS-Server-*' | head -1)"
     LIB_SRC_DIR="${SCRIPT_SOURCE_DIR}/lib"
