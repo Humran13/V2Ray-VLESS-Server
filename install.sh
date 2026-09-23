@@ -63,7 +63,7 @@ arch_detect
 
 # ---- 5. internet/DNS --------------------------------------------------------
 step "Checking internet connectivity"
-if ! safe_curl_stdout "https://api.github.com" >/dev/null 2>&1; then
+if ! safe_curl_stdout "https://github.com" >/dev/null 2>&1; then
     die "no internet connectivity to github.com - required to download Xray"
 fi
 log_ok "Internet OK"

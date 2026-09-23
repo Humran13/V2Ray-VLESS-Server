@@ -84,7 +84,7 @@ diagnostics_run() {
         log_warn "Low disk space or unable to determine (${free_kb:-unknown} KB free)"
     fi
 
-    if safe_curl_stdout "https://api.github.com" >/dev/null 2>&1; then
+    if safe_curl_stdout "https://github.com" >/dev/null 2>&1; then
         log_ok "Internet/DNS reachability OK"
     else
         log_warn "Could not reach the internet (github.com) - update checks will fail"
