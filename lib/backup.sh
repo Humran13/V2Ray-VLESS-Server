@@ -9,7 +9,11 @@ backup_create() {
     mkdir -p "$VLESS_BACKUP_DIR"
     chmod 0700 "$VLESS_BACKUP_DIR"
     local stamp file
-    stamp="$(date -u +%Y%m%d-%H%M%S)"
+    # A random suffix (not just a second-resolution timestamp) guarantees a
+    # unique filename even when two backups are created within the same
+    # second, e.g. backup_restore()'s own pre-restore safety snapshot -
+    # otherwise it can silently overwrite the very archive being restored.
+    stamp="$(date -u +%Y%m%d-%H%M%S)-$(gen_random_hex 3)"
     file="${VLESS_BACKUP_DIR}/vless-backup-${stamp}.tar.gz"
 
     local staging; staging="$(mk_tmp_dir)"
